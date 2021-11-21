@@ -1,0 +1,70 @@
+#!/bin/rc
+
+rfork en
+test -r /srv/gridircmq || {
+	/usr/sirjofri/src/gridirc/gridircprep
+}
+mount /srv/gridircmq /n/chat
+
+nick=user
+user=user
+prefix=9p.zone
+joined=false
+pids=()
+
+fn sigint{
+	for (i in $pids)
+		echo kill>/proc/$i/ctl
+	exit
+}
+
+fn sighup{
+	for (i in $pids)
+		echo kill>/proc/$i/ctl
+	exit
+}
+
+fn loopread{
+while(c=`{read})
+	echo :$1 PRIVMSG '#'$1 :$"c
+}
+
+fn startread{
+	{ cat /n/chat/$1 | loopread $1 } &
+	pids=($pids $apid)
+}
+
+fn loop{
+cmd=`{read}
+switch($cmd(1)){
+case NICK
+	nick=$cmd(2)
+	#echo nick $cmd(2)
+case USER
+	user=$cmd(2)
+	echo 001 $nick :Welcome $nick!$user@$prefix
+case JOIN
+	ch=`{echo $cmd(2) | sed 's/^:?#//g'}
+	echo :$nick JOIN '#'^$ch
+	echo 332 '#'^$ch :Channel $ch
+	echo 353 '#'^$ch :$ch $nick
+	echo 366 '#'^$ch :End of NAMES list
+	startread $ch
+case PRIVMSG
+	ch=`{echo $cmd(2) | sed 's/^#//g'}
+	msg=`{echo $cmd | sed 's/^[^:]*://'}
+	echo $nick → $msg >>/n/chat/$ch^WRITE
+	#echo msg: $msg
+case PING
+	echo $cmd | sed 's/PING/PONG/'
+case QUIT
+	for (i in $pids)
+		echo kill>/proc/$i/ctl
+	exit
+case *
+	#echo ignored
+}
+loop
+}
+
+loop
