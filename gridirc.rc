@@ -24,9 +24,30 @@ fn sighup{
 	exit
 }
 
+fn parsed{
+echo $* | awk 'NF >= 3 {
+	chan=ENVIRON["currentchannel"]
+	if (length($2) == 1){
+		sender=$1
+		$1=""
+		$2=""
+		sub(/^ +/, "")
+		printf ":%s PRIVMSG #%s :%s\n", sender, chan, $0
+	} else {
+		printf ":%s PRIVMSG #%s :%s\n", chan, chan, $0
+	}
+	next
+}
+{
+	printf ":%s PRIVMSG #%s :%s\n", chan, chan, $0
+}'
+}
+
 fn loopread{
+currentchannel=$1
 while(c=`{read})
-	echo :$1 PRIVMSG '#'$1 :$"c
+	parsed $c
+	#echo :$1 PRIVMSG '#'$1 :$"c
 }
 
 fn startread{
