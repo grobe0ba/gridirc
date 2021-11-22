@@ -1,32 +1,43 @@
 #!/bin/rc
 
 rfork en
-test -r /srv/gridircmq || {
-	/usr/sirjofri/src/gridirc/gridircprep
+srv net!chat.9p.zone!9990 gridirc.$pid /n/chat || {
+	echo Fail!
+	exit
 }
-mount /srv/gridircmq /n/chat
+echo -n >/env/gridircpids
 
-nick=user
-user=user
-prefix=9p.zone
-joined=false
-pids=()
+fn managedexit{ # exit routine
+	pids=`{cat /env/gridircpids}
+	for (i in $pids){
+		echo killing reader $i
+		echo kill >/proc/$i/ctl
+	}
+	rm /srv/gridirc.$pid
+	exit
+}
 
 fn sigint{
-	for (i in $pids)
-		echo kill>/proc/$i/ctl
-	exit
+	managedexit
 }
 
 fn sighup{
-	for (i in $pids)
-		echo kill>/proc/$i/ctl
-	exit
+	managedexit
 }
 
-fn parsed{
-echo $* | awk 'NF >= 3 {
-	chan=ENVIRON["currentchannel"]
+fn startread{
+currentdate=`{date -u}
+echo JOIN $2 $currentdate >>/n/chat/$1
+awk -v 'chan='^$1 -v 'nick='^$2 '
+BEGIN { doprint=0 }
+$0 ~ ENVIRON["currentdate"] { doprint=1 }
+!doprint { next }
+
+doprint && NF >= 2 && $1 ~ nick && $2 ~ /^→$/ {
+	next
+}
+
+doprint && NF >= 2 {
 	if (length($2) == 1){
 		sender=$1
 		$1=""
@@ -36,56 +47,75 @@ echo $* | awk 'NF >= 3 {
 	} else {
 		printf ":%s PRIVMSG #%s :%s\n", chan, chan, $0
 	}
+	fflush
 	next
 }
-{
+
+doprint && NF > 1 && $1 ~ /^JOIN$/ {
+	printf ":%s JOIN #%s\n", $2, chan
+	fflush
+	next
+}
+
+doprint {
 	printf ":%s PRIVMSG #%s :%s\n", chan, chan, $0
-}'
+	fflush
+}
+' /n/chat/$1 &
+echo $apid >>/env/gridircpids
 }
 
-fn loopread{
-currentchannel=$1
-while(c=`{read})
-	parsed $c
-	#echo :$1 PRIVMSG '#'$1 :$"c
+# mainloop
+awk '
+BEGIN {
+	nick="user"
+	user="user"
+	host="9p.zone"
 }
 
-fn startread{
-	{ cat /n/chat/$1 | loopread $1 } &
-	pids=($pids $apid)
+NF >= 2 && $1 ~ /^NICK$/ {
+	nick=$2
 }
 
-fn loop{
-cmd=`{read}
-switch($cmd(1)){
-case NICK
-	nick=$cmd(2)
-	#echo nick $cmd(2)
-case USER
-	user=$cmd(2)
-	echo 001 $nick :Welcome $nick!$user@$prefix
-case JOIN
-	ch=`{echo $cmd(2) | sed 's/^:?#//g'}
-	echo :$nick JOIN '#'^$ch
-	echo 332 '#'^$ch :Channel $ch
-	echo 353 '#'^$ch :$ch $nick
-	echo 366 '#'^$ch :End of NAMES list
-	startread $ch
-case PRIVMSG
-	ch=`{echo $cmd(2) | sed 's/^#//g'}
-	msg=`{echo $cmd | sed 's/^[^:]*://'}
-	echo $nick → $msg >>/n/chat/$ch^WRITE
-	#echo msg: $msg
-case PING
-	echo $cmd | sed 's/PING/PONG/'
-case QUIT
-	for (i in $pids)
-		echo kill>/proc/$i/ctl
+NF >= 2 && $1 ~ /^USER$/ {
+	user=$2
+	printf "001 %s :Welcome %s!%s@%s\n", nick, nick, user, host
+	fflush
+}
+
+NF >= 2 && $1 ~ /^JOIN$/ {
+	sub(/^:?#/, "", $2)
+	printf ":%s JOIN #%s\n", nick, $2
+	printf "332 #%s :Channel %s\n", $2, $2
+	printf "353 #%s :%s %s\n", $2, $2, nick
+	printf "366 #%s :End of NAMES list\n", $2
+	cmd=sprintf("startread %s %s &", $2, nick)
+	system(cmd)
+	fflush
+}
+
+NF >= 2 && $1 ~ /^PRIVMSG$/ {
+	sub(/^#/, "", $2)
+	chan=$2
+	sub(/^[^:]*:/, "")
+	printf "%s → %s\n", nick, $0 >> "/n/chat/chat"
+	fflush
+}
+
+NF >= 2 && $1 ~ /^PART$/ {
+	sub(/^#/, "", $2)
+	chan=$2
+}
+
+$1 ~ /^PING$/ {
+	sub(/^PING/, "PONG")
+	printf "%s\n", $0
+	fflush
+}
+
+$1 ~ /^QUIT$/ {
 	exit
-case *
-	#echo ignored
 }
-loop
-}
+'
 
-loop
+managedexit
