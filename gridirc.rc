@@ -37,6 +37,12 @@ doprint && NF >= 2 && $1 ~ nick && $2 ~ /^→$/ {
 	next
 }
 
+doprint && NF > 1 && $1 ~ /^JOIN$/ {
+	printf ":%s JOIN #%s\n", $2, chan
+	fflush
+	next
+}
+
 doprint && NF >= 2 {
 	if (length($2) == 1){
 		sender=$1
@@ -47,12 +53,6 @@ doprint && NF >= 2 {
 	} else {
 		printf ":%s PRIVMSG #%s :%s\n", chan, chan, $0
 	}
-	fflush
-	next
-}
-
-doprint && NF > 1 && $1 ~ /^JOIN$/ {
-	printf ":%s JOIN #%s\n", $2, chan
 	fflush
 	next
 }
