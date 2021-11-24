@@ -38,7 +38,7 @@ doprint && NF >= 2 && $1 ~ nick && $2 ~ /^→$/ {
 }
 
 doprint && NF > 1 && $1 ~ /^JOIN$/ {
-	printf ":%s JOIN #%s\n", $2, chan
+	printf ":%s JOIN #%s\r\n", $2, chan
 	fflush
 	next
 }
@@ -49,16 +49,16 @@ doprint && NF >= 2 {
 		$1=""
 		$2=""
 		sub(/^ +/, "")
-		printf ":%s PRIVMSG #%s :%s\n", sender, chan, $0
+		printf ":%s PRIVMSG #%s :%s\r\n", sender, chan, $0
 	} else {
-		printf ":%s PRIVMSG #%s :%s\n", chan, chan, $0
+		printf ":%s PRIVMSG #%s :%s\r\n", chan, chan, $0
 	}
 	fflush
 	next
 }
 
 doprint {
-	printf ":%s PRIVMSG #%s :%s\n", chan, chan, $0
+	printf ":%s PRIVMSG #%s :%s\r\n", chan, chan, $0
 	fflush
 }
 ' /n/chat/$1 &
@@ -73,22 +73,33 @@ BEGIN {
 	host="9p.zone"
 }
 
+$1 ~ /^:/ {
+	$1=""
+	sub(/^ */, "")
+}
+
 NF >= 2 && $1 ~ /^NICK$/ {
 	nick=$2
 }
 
 NF >= 2 && $1 ~ /^USER$/ {
 	user=$2
-	printf "001 %s :Welcome %s!%s@%s\n", nick, nick, user, host
+	printf ":%s 001 %s :Welcome %s!%s@%s\r\n", host, nick, nick, user, host
+	printf ":%s 002 %s :Your host is %s\r\n", host, nick, host
+	printf ":%s 003 %s :This server was created some time ago\r\n", host, nick
+	printf ":%s 004 %s :gridirc\r\n", host, nick
 	fflush
 }
 
 NF >= 2 && $1 ~ /^JOIN$/ {
 	sub(/^:?#/, "", $2)
-	printf ":%s JOIN #%s\n", nick, $2
-	printf "332 #%s :Channel %s\n", $2, $2
-	printf "353 #%s :%s %s\n", $2, $2, nick
-	printf "366 #%s :End of NAMES list\n", $2
+	printf ":%s JOIN #%s\r\n", nick, $2
+	printf ":%s 332 #%s :Channel %s\r\n", host, $2, $2
+	if (joined[$2] == 1)
+		next
+	printf ":%s 353 #%s :%s %s\r\n", host, $2, $2, nick
+	printf ":%s 366 #%s :End of NAMES list\r\n", host, $2
+	joined[$2]=1
 	cmd=sprintf("startread %s %s &", $2, nick)
 	system(cmd)
 	fflush
@@ -98,23 +109,35 @@ NF >= 2 && $1 ~ /^PRIVMSG$/ {
 	sub(/^#/, "", $2)
 	chan=$2
 	sub(/^[^:]*:/, "")
-	printf "%s → %s\n", nick, $0 >> "/n/chat/chat"
+	file=sprintf("/n/chat/%s", chan)
+	printf "%s → %s\n", nick, $0 >> file
 	fflush
 }
 
 NF >= 2 && $1 ~ /^PART$/ {
 	sub(/^#/, "", $2)
 	chan=$2
+	$1=""
+	sub(/^[^:]*:/, "")
+	file=sprintf("/n/chat/%s", chan)
+	printf "IRC user %s parted: %s\n", nick, $0 >> file
+	printf ":%s PART #%s\r\n", nick, chan
+	fflush
 }
 
 $1 ~ /^PING$/ {
 	sub(/^PING/, "PONG")
-	printf "%s\n", $0
+	printf "%s\r\n", $0
 	fflush
 }
 
 $1 ~ /^QUIT$/ {
 	exit
+}
+
+$1 ~ /^VERSION/ || $1 ~ /^INFO/ {
+	printf ":%s 351 %s :gridirc - bridge to IRC\r\n", host, nick
+	fflush
 }
 '
 
