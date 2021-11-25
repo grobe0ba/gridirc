@@ -10,8 +10,8 @@ echo -n >/env/gridircpids
 fn managedexit{ # exit routine
 	pids=`{cat /env/gridircpids}
 	for (i in $pids){
-		echo killing reader $i
-		echo kill >/proc/$i/ctl
+		#echo killing reader $i
+		echo kill >>/proc/$i/ctl
 	}
 	rm /srv/gridirc.$pid
 	exit
@@ -27,85 +27,92 @@ fn sighup{
 
 fn startread{
 currentdate=`{date -u}
-echo JOIN $2 $currentdate >>/n/chat/$1
-awk -v 'chan='^$1 -v 'nick='^$2 '
+echo JOIN $3 $currentdate >>/n/chat/$2
+awk -v 'host='^$1 -v 'chan='^$2 -v 'nick='^$3 '
 BEGIN { doprint=0 }
-$0 ~ ENVIRON["currentdate"] { doprint=1 }
+$1 ~ /^JOIN/ && $0 ~ ENVIRON["currentdate"] {
+    doprint=1
+    next
+}
 !doprint { next }
 
 doprint && NF >= 2 && $1 ~ nick && $2 ~ /^→$/ {
 	next
 }
 
-doprint && NF > 1 && $1 ~ /^JOIN$/ {
-	printf ":%s JOIN #%s\r\n", $2, chan
-	fflush
-	next
+function sendMsg(origin, recip, msg) {
+    printf ":%s PRIVMSG %s :%s\r\n", origin, recip, msg
+    fflush
 }
 
-doprint && NF >= 2 {
-	if (length($2) == 1){
-		sender=$1
-		$1=""
-		$2=""
-		sub(/^ +/, "")
-		printf ":%s PRIVMSG #%s :%s\r\n", sender, chan, $0
-	} else {
-		printf ":%s PRIVMSG #%s :%s\r\n", chan, chan, $0
-	}
-	fflush
+doprint && NF >= 3 {
+    msg=""
+    split($0, msg_a)
+    for(i = 3; i <= length(msg_a); i++) {
+        msg = sprintf("%s %s", msg, msg_a[i])
+    }
+    sendMsg($1, sprintf("#%s", chan), msg)
 	next
 }
 
 doprint {
-	printf ":%s PRIVMSG #%s :%s\r\n", chan, chan, $0
-	fflush
+    sendMsg(host, chan, $0)
+    next
 }
-' /n/chat/$1 &
+' /n/chat/$2 &
 echo $apid >>/env/gridircpids
 }
 
 # mainloop
-awk '
+awk -mr 512 '
 BEGIN {
-	nick="user"
-	user="user"
+	RS="\r\n"
+	ORS="\r\n"
+	nick="nonick"
+	user="nouser"
 	host="9p.zone"
+}
+
+function handleJoin(chan) {
+	printf ":%s JOIN #%s\r\n", nick, chan
+	printf ":%s 332 #%s :Channel %s\r\n", host, chan, chan
+	printf ":%s 353 = #%s :%s\r\n", host, chan, nick
+	printf ":%s 366 #%s :End of NAMES list\r\n", host, chan
+	joined[$2]=1
+	cmd=sprintf("startread %s %s %s &", host, chan, nick)
+	system(cmd)
+	fflush
 }
 
 $1 ~ /^:/ {
 	$1=""
 	sub(/^ */, "")
+    fflush
 }
 
-NF >= 2 && $1 ~ /^NICK$/ {
+$1 ~ /^NICK$/ {
 	nick=$2
 }
 
-NF >= 2 && $1 ~ /^USER$/ {
+$1 ~ /^USER$/ {
 	user=$2
 	printf ":%s 001 %s :Welcome %s!%s@%s\r\n", host, nick, nick, user, host
 	printf ":%s 002 %s :Your host is %s\r\n", host, nick, host
 	printf ":%s 003 %s :This server was created some time ago\r\n", host, nick
-	printf ":%s 004 %s :gridirc\r\n", host, nick
+	printf ":%s 004 %s gridirc 0.1-alpha i ov\r\n", host, nick
+	printf ":%s 375 %s :- %s Message of the day -\r\n", host, host, nick
+	printf ":%s 372 %s :- Welcome to the grid!\r\n", host, nick
+	printf ":%s 376 %s :End of MOTD command\r\n", host, nick
+    handleJoin("chat")
 	fflush
 }
 
-NF >= 2 && $1 ~ /^JOIN$/ {
+$1 ~ /^JOIN$/ {
 	sub(/^:?#/, "", $2)
-	printf ":%s JOIN #%s\r\n", nick, $2
-	printf ":%s 332 #%s :Channel %s\r\n", host, $2, $2
-	if (joined[$2] == 1)
-		next
-	printf ":%s 353 #%s :%s %s\r\n", host, $2, $2, nick
-	printf ":%s 366 #%s :End of NAMES list\r\n", host, $2
-	joined[$2]=1
-	cmd=sprintf("startread %s %s &", $2, nick)
-	system(cmd)
-	fflush
+    handleJoin($2)
 }
 
-NF >= 2 && $1 ~ /^PRIVMSG$/ {
+$1 ~ /^PRIVMSG$/ {
 	sub(/^#/, "", $2)
 	chan=$2
 	sub(/^[^:]*:/, "")
@@ -114,7 +121,7 @@ NF >= 2 && $1 ~ /^PRIVMSG$/ {
 	fflush
 }
 
-NF >= 2 && $1 ~ /^PART$/ {
+$1 ~ /^PART$/ {
 	sub(/^#/, "", $2)
 	chan=$2
 	$1=""
@@ -127,7 +134,7 @@ NF >= 2 && $1 ~ /^PART$/ {
 
 $1 ~ /^PING$/ {
 	sub(/^PING/, "PONG")
-	printf "%s\r\n", $0
+	printf ":%s PONG %s :%s\r\n", host, host, host
 	fflush
 }
 
@@ -135,10 +142,10 @@ $1 ~ /^QUIT$/ {
 	exit
 }
 
-$1 ~ /^VERSION/ || $1 ~ /^INFO/ {
-	printf ":%s 351 %s :gridirc - bridge to IRC\r\n", host, nick
-	fflush
-}
+#$1 ~ /^VERSION/ || $1 ~ /^INFO/ {
+#	printf ":%s 351 %s :gridirc - bridge to IRC\r\n", host, nick
+#	fflush
+#}
 '
 
 managedexit
