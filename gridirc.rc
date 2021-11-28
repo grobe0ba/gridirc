@@ -10,11 +10,9 @@ srv net!chat.9p.zone!9990 gridirc.$pid /n/chat || {
 }
 echo -n >/env/gridircpids
 
-echo Starting mq >[1=2]
-mq -m /n/buf
-echo $apid >>/env/gridircpids
-
 fn managedexit{ # exit routine
+    unmount /n/chat
+    rm /srv/gridirc.$pid
     echo Attempting to exit >[1=2]
 	pids=`{cat /env/gridircpids}
 	for (i in $pids){
@@ -38,16 +36,7 @@ fn sighup{
 fn startread{
 currentdate=`{date -u}
 
-echo -n >/n/buf/from.$2
-echo -n >/n/buf/to.$2
-
-cat /n/chat/$2 >>/n/buf/from.$2 &
-echo $apid >> /env/gridircpids
-
-cat /n/buf/to.$2  >>/n/chat/$2 &
-echo $apid >> /env/gridircpids
-
-echo JOIN $3 $currentdate >>/n/buf/from.$2
+echo JOIN $3 $currentdate >>/n/chat/$2
 
 awk -v 'host='^$1 -v 'chan='^$2 -v 'nick='^$3 '
 BEGIN { doprint=0 }
@@ -80,7 +69,7 @@ doprint {
     sendMsg(host, chan, $0)
     next
 }
-' /n/buf/from.$2 &
+' /n/$2 &
 echo $apid >>/env/gridircpids
 }
 
@@ -137,7 +126,7 @@ $1 ~ /^PRIVMSG$/ {
 	sub(/^#/, "", $2)
 	chan=$2
 	sub(/^[^:]*:/, "")
-	file=sprintf("/n/buf/%s", chan)
+	file=sprintf("/n/chat/%s", chan)
 	printf "%s → %s\n", nick, $0 >> file
 	fflush
 }
@@ -147,7 +136,7 @@ $1 ~ /^PART$/ {
 	chan=$2
 	$1=""
 	sub(/^[^:]*:/, "")
-	file=sprintf("/n/buf/to.%s", chan)
+	file=sprintf("/n/chat/%s", chan)
 	printf "IRC user %s parted: %s\n", nick, $0 >> file
 	printf ":%s PART #%s\r\n", nick, chan
 	fflush
